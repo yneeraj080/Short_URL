@@ -1,0 +1,23 @@
+{
+  "name": "url-short",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.x.x",
+    "express": "^4.x.x",
+    "mongoose": "^8.x.x",
+    "nanoid": "^5.x.x",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.x.x"
+  }
+}
