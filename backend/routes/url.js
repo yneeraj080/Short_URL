@@ -1,5 +1,6 @@
 const exprees = require("express");
 const router=exprees.Router();
+const {body} = require("express-validator");
 const{
     shortenUrl,
     redirectUrl,
@@ -9,7 +10,17 @@ const{
     getOriginalQRCode,
 }=require("../controllers/urlController");
 
-router.post("/shorten", shortenUrl);
+router.post("/shorten",[
+    body("originalUrl")
+        .isURL()
+        .withMessage("please provide a valid URL"),
+    body("alias")
+        .optional()
+        .isAlphanumeric()
+        .withMessage("Alias must be alphanumeric")
+        .isLength({min:3, max:20})
+        .withMessage("Alias must br between 3 and 20 characters")
+], shortenUrl);
 
 router.get("/lookup/:code",lookupUrl);
 

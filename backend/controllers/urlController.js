@@ -1,8 +1,13 @@
 const Url=require("../models/Url");
 const {nanoid}= require("nanoid");
 const QRCode=require("qrcode");
+const {validationResult}= require("express-validator");
 
 const shortenUrl=async(req, res)=>{
+    const errors=validationResult(req);
+    if(!errors.isEmpty()){
+        return res.status(400).json({errors:errors.array()});
+    }
     const {originalUrl, alias}= req.body;
     try{
         if(alias){

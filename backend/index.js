@@ -1,6 +1,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
+const rateLimit=require("express-rate-limit");
 
 dotenv.config();
 
@@ -17,6 +18,17 @@ app.use("/api",urlRoutes);
 
 const {redirectUrl}=require("./controllers/urlController");
 app.get("/:code",redirectUrl);
+
+// rate_limiter
+
+const limiter=rateLimit({
+  windowMs: 10*60*1000,
+  limit: 100,
+  message:{
+    error: "Too maney requests, please try again after 10 mins"
+  }
+});
+app.use(limiter);
 
 // Connect to MongoDB
 
