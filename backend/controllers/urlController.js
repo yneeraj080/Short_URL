@@ -8,7 +8,7 @@ const shortenUrl=async(req, res)=>{
     if(!errors.isEmpty()){
         return res.status(400).json({errors:errors.array()});
     }
-    const {originalUrl, alias}= req.body;
+    const {originalUrl, alias, expiresIn}= req.body;
     try{
         if(alias){
             const existing=await Url.findOne({shortCode:alias});
@@ -17,12 +17,18 @@ const shortenUrl=async(req, res)=>{
             }
         }
         const shortCode= alias || nanoid(6);
-        const url= new Url({originalUrl, shortCode});
+        // set the expiry date
+        const expiresAt=expiresIn
+            ? new Date(Date.now()+ expiresIn*24*60*60*1000)
+            : new Date(Date.now()+30*24*60*60*1000)
+        
+        const url= new Url({originalUrl, shortCode,expiresAt});
         await url.save();
         res.status(201).json({
             originalUrl,
             shortCode,
             shortUrl: `http://localhost:5000/${shortCode}`,
+            expiresAt,
         });
     }catch(error){
         res.status(500).json({error:"Server error"});
@@ -36,6 +42,12 @@ const redirectUrl =async (req,res)=>{
         if(!url){
             return res.status(404).json({error:"Short URL not found"});
         }
+        // check if Url is expired
+        if(url.expiresAt< new Date()){
+            await Url.deleteOne({short:Code});
+            return res.status(410).json({error: "Short URL has expired"});
+        }
+        // count clicks
         url.clicks++;
         await url.save();
         res.redirect(url.originalUrl);
