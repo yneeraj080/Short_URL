@@ -11,10 +11,12 @@
     "dev": "nodemon index.js"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "dotenv": "^16.x.x",
     "express": "^4.x.x",
     "express-rate-limit": "^8.7.0",
     "express-validator": "^7.3.2",
+    "jsonwebtoken": "^9.0.3",
     "mongoose": "^8.x.x",
     "nanoid": "^5.x.x",
     "qrcode": "^1.5.4"

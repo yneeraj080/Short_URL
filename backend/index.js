@@ -25,6 +25,10 @@ app.use(limiter);
 const urlRoutes=require("./routes/url");
 app.use("/api",urlRoutes);
 
+// Auth routes
+const authRoutes= require("./routes/auth");
+app.use("/api/auth",authRoutes);
+
 // redirect route
 
 const {redirectUrl}=require("./controllers/urlController");
