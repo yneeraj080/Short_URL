@@ -1,6 +1,7 @@
-const exprees = require("express");
-const router=exprees.Router();
+const express = require("express");
+const router=express.Router();
 const {body} = require("express-validator");
+const auth = require("../middleware/auth")
 const{
     shortenUrl,
     redirectUrl,
@@ -10,7 +11,7 @@ const{
     getOriginalQRCode,
 }=require("../controllers/urlController");
 
-router.post("/shorten",[
+router.post("/shorten",auth,[
     body("originalUrl")
         .isURL()
         .withMessage("please provide a valid URL"),
