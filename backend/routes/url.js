@@ -9,6 +9,8 @@ const{
     getStats,
     getQRCode,
     getOriginalQRCode,
+    getUserUrls,
+    deleteUrl,
 }=require("../controllers/urlController");
 
 router.post("/shorten",auth,[
@@ -22,6 +24,10 @@ router.post("/shorten",auth,[
         .isLength({min:3, max:20})
         .withMessage("Alias must br between 3 and 20 characters")
 ], shortenUrl);
+
+router.get("/urls",auth,getUserUrls);
+
+router.delete("/urls/:code",auth,deleteUrl);
 
 router.get("/lookup/:code",lookupUrl);
 

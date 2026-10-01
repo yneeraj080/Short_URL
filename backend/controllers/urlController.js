@@ -125,6 +125,30 @@ const getOriginalQRCode = async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 };
+// get all Urls for logged in user
+const getUserUrls= async(req,res)=>{
+  try{
+    const urls=await Url.find().sort({createdAt:-1});
+    res.json(urls);
+  }catch(error){
+      res.status(500).json({error:"Server error"})
+  }
+};
+
+// delete a Url
+const deleteUrl=async(req,res)=>{
+  const {code} = req.params;
+  try{
+    const url= await Url.findOne({shortCode : code});
+    if(!url){
+      return res.status(404).json({error:"short Url not found"});
+    }
+    await Url.deleteOne({shortCode:code});
+    res.json({message:"Url deleted successfully"});
+  }catch(error){
+    res.status(500).json({error:"server error"});
+  }
+};
 
 module.exports = {
   shortenUrl,
@@ -133,4 +157,6 @@ module.exports = {
   getStats,
   getQRCode,
   getOriginalQRCode,
+  getUserUrls,
+  deleteUrl
 };
