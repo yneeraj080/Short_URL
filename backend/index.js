@@ -39,13 +39,13 @@ app.use("/api/auth", authRoutes);
 const { redirectUrl } = require("./controllers/urlController");
 app.get("/:code", redirectUrl);
 
-// Connect to MongoDB
+// Connect to MongoDB server
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB connected successfully"))
   .catch((err) => console.log("MongoDB connection error:", err));
 
-// Error handling
+// Error handlinging
 const errorHandler = require("./middleware/errorHandler");
 app.use(errorHandler);
 
