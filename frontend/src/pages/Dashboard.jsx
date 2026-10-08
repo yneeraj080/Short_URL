@@ -131,7 +131,7 @@ const Dashboard = () => {
                     </td>
                     <td className="px-6 py-4">
                       <a
-                        href={`http://localhost:5000/${url.shortCode}`}
+                        href={`http://54.87.185.37:5000/${url.shortCode}`}
                         target="_blank"
                         rel="noreferrer"
                         className="text-sm text-indigo-600 font-mono hover:underline"
@@ -152,7 +152,7 @@ const Dashboard = () => {
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => handleCopy(`http://localhost:5000/${url.shortCode}`)}
+                          onClick={() => handleCopy(`http://54.87.185.37:5000/${url.shortCode}`)}
                           className="px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors"
                         >
                           Copy
