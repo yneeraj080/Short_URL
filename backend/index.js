@@ -10,7 +10,10 @@ const app = express();
 
 // CORS
 app.use(cors({
-  origin: "http://54.87.185.37:3000",
+  origin: [
+    "http://localhost:3000",
+    "http://54.87.185.37:3000",
+  ],
   credentials: true,
 }));
 
