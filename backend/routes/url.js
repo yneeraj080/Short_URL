@@ -31,11 +31,11 @@ router.delete("/urls/:code",auth,deleteUrl);
 
 router.get("/lookup/:code",lookupUrl);
 
-router.get("/stats/:code",getStats);
+router.get("/stats/:code", auth, getStats);
 
-router.get("/qr/:code", getQRCode);
+router.get("/qr/:code", auth, getQRCode);
 
-router.get("/qr/original/:code",getOriginalQRCode);
+router.get("/qr/original/:code", auth, getOriginalQRCode);
 
 
 module.exports=router;

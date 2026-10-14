@@ -1,38 +1,45 @@
-const mongoose=require("mongoose");
 
-const urlSchema=new mongoose.Schema({
-    originalUrl:{
-        type:String,
+const mongoose = require("mongoose");
+
+const urlSchema = new mongoose.Schema({
+    userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        index: true,
+    },
+    originalUrl: {
+        type: String,
         required: true,
     },
-    shortCode:{
+    shortCode: {
         type: String,
         required: true,
         unique: true,
         index: true,
     },
-    clicks:{
-        type:Number,
-        default:0,
+    clicks: {
+        type: Number,
+        default: 0,
     },
-    analytics:[
+    analytics: [
         {
-            clickedAt:{
-                type:Date,
-                default:Date.now,
+            clickedAt: {
+                type: Date,
+                default: Date.now,
             },
-            browser:String,
-            device:String,
+            browser: String,
+            device: String,
             os: String,
         },
     ],
-    expiresAt:{
+    expiresAt: {
         type: Date,
-        default: ()=> new Date(Date.now()+ 30*24*60*60*1000),
+        default: () => new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
     },
-    createdAt:{
+    createdAt: {
         type: Date,
         default: Date.now,
     },
 });
-module.exports=mongoose.model("Url",urlSchema);
+
+module.exports = mongoose.model("Url", urlSchema);
