@@ -5,8 +5,13 @@ services:
       - "5000:5000"
     env_file:
       - ./backend/.env
+    environment:
+      REDIS_URL: redis://redis:6379
     depends_on:
-      - mongo
+      mongo:
+        condition: service_started
+      redis:
+        condition: service_healthy
 
   frontend:
     build: ./frontend
@@ -19,6 +24,15 @@ services:
     image: mongo:7
     volumes:
       - mongo-data:/data/db
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
 volumes:
   mongo-data:

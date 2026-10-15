@@ -13,7 +13,9 @@ const shortenUrl = async (req, res) => {
   }
 
   if (!req.user || !req.user.id) {
-    return res.status(401).json({ error: "Authentication required" });
+    return res.status(401).json({
+      error: "Authentication required",
+    });
   }
 
   const { originalUrl, alias, expiresIn } = req.body;
@@ -21,10 +23,14 @@ const shortenUrl = async (req, res) => {
   try {
     // Check whether the custom alias is already taken
     if (alias) {
-      const existing = await Url.findOne({ shortCode: alias });
+      const existing = await Url.findOne({
+        shortCode: alias,
+      });
 
       if (existing) {
-        return res.status(400).json({ error: "Alias already taken" });
+        return res.status(400).json({
+          error: "Alias already taken",
+        });
       }
     }
 
@@ -32,10 +38,12 @@ const shortenUrl = async (req, res) => {
 
     // Set expiration date
     const expiresAt = expiresIn
-      ? new Date(Date.now() + expiresIn * 24 * 60 * 60 * 1000)
+      ? new Date(
+          Date.now() + expiresIn * 24 * 60 * 60 * 1000
+        )
       : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-    // IMPORTANT: Associate the URL with its creator
+    // Associate the URL with its creator
     const url = new Url({
       originalUrl,
       shortCode,
@@ -45,7 +53,8 @@ const shortenUrl = async (req, res) => {
 
     await url.save();
 
-    const shortUrl = `${req.protocol}://${req.get("host")}/${shortCode}`;
+    const shortUrl =
+      `${req.protocol}://${req.get("host")}/${shortCode}`;
 
     return res.status(201).json({
       originalUrl,
@@ -62,62 +71,120 @@ const shortenUrl = async (req, res) => {
       });
     }
 
-    return res.status(500).json({ error: "Server error" });
+    return res.status(500).json({
+      error: "Server error",
+    });
   }
 };
 
-// Redirect a short URL to its original destination
+// Redirect a short URL and update click analytics
+// Redirect using Redis cache and queue click analytics
 const redirectUrl = async (req, res) => {
   const { code } = req.params;
+  const now = new Date();
+  const redis = req.app.locals.redis;
+  const cacheKey = `url:${code}`;
 
   try {
-    // Redirects remain public
-    const url = await Url.findOne({ shortCode: code });
+    let url = null;
 
-    if (!url) {
-      return res.status(404).json({ error: "Short URL not found" });
+    // 1. Try Redis cache first
+    try {
+      const cached = await redis.get(cacheKey);
+
+      if (cached) {
+        url = JSON.parse(cached);
+      }
+    } catch (error) {
+      console.error("Redis cache read failed:", error.message);
     }
 
-    // Check expiration
-    if (url.expiresAt && url.expiresAt < new Date()) {
-      await Url.deleteOne({ shortCode: code });
+    // 2. On a cache miss, read from MongoDB
+    if (!url) {
+      const record = await Url.findOne({
+        shortCode: code,
+      })
+        .select("_id originalUrl expiresAt")
+        .lean();
+
+      if (!record) {
+        return res.status(404).json({
+          error: "Short URL not found",
+        });
+      }
+
+      url = {
+        _id: String(record._id),
+        originalUrl: record.originalUrl,
+        expiresAt: record.expiresAt
+          ? new Date(record.expiresAt).toISOString()
+          : null,
+      };
+    }
+
+    // 3. Check expiry even when the URL came from cache
+    if (url.expiresAt && new Date(url.expiresAt) <= now) {
+      await Url.deleteOne({ _id: url._id });
+
+      try {
+        await redis.del(cacheKey);
+      } catch (error) {
+        console.error("Redis cache deletion failed:", error.message);
+      }
 
       return res.status(410).json({
         error: "Short URL has expired",
       });
     }
 
-    // Parse user agent
+    // 4. Cache the destination for 60 seconds
+    try {
+      await redis.set(cacheKey, JSON.stringify(url), {
+        EX: 60,
+      });
+    } catch (error) {
+      console.error("Redis cache write failed:", error.message);
+    }
+
+    // 5. Prepare click analytics
     const parser = new UAParser(req.headers["user-agent"]);
+
     const browser = parser.getBrowser().name || "Unknown";
     const device = parser.getDevice().type || "Desktop";
     const os = parser.getOS().name || "Unknown";
 
-    // Update click analytics
-    url.clicks = (url.clicks || 0) + 1;
+    // 6. Publish the click event; MongoDB is updated by the worker
+    try {
+      await redis.xAdd("url-click-events", "*", {
+        urlId: String(url._id),
+        clickedAt: now.toISOString(),
+        browser,
+        device,
+        os,
+      });
+    } catch (error) {
+      // Keep the redirect available if analytics publishing fails.
+      console.error("Failed to publish click event:", error.message);
+    }
 
-    url.analytics.push({
-      clickedAt: new Date(),
-      browser,
-      device,
-      os,
-    });
-
-    await url.save();
-
+    // 7. Redirect without waiting for MongoDB analytics writes
     return res.redirect(url.originalUrl);
   } catch (error) {
     console.error("Error redirecting short URL:", error);
-    return res.status(500).json({ error: "Server error" });
+
+    return res.status(500).json({
+      error: "Server error",
+    });
   }
 };
-
-// Look up the destination of a public short URL
+// Look up the destination of a short URL
 const lookupUrl = async (req, res) => {
   const { code } = req.params;
 
   try {
-    const url = await Url.findOne({ shortCode: code });
+    const url = await Url.findOne({
+      shortCode: code,
+    });
 
     if (!url) {
       return res.status(404).json({
@@ -130,7 +197,10 @@ const lookupUrl = async (req, res) => {
     });
   } catch (error) {
     console.error("Error looking up short URL:", error);
-    return res.status(500).json({ error: "Server error" });
+
+    return res.status(500).json({
+      error: "Server error",
+    });
   }
 };
 
@@ -139,11 +209,12 @@ const getStats = async (req, res) => {
   const { code } = req.params;
 
   if (!req.user || !req.user.id) {
-    return res.status(401).json({ error: "Authentication required" });
+    return res.status(401).json({
+      error: "Authentication required",
+    });
   }
 
   try {
-    // Check ownership as well as the short code
     const url = await Url.findOne({
       shortCode: code,
       userId: req.user.id,
@@ -165,7 +236,10 @@ const getStats = async (req, res) => {
     });
   } catch (error) {
     console.error("Error fetching URL statistics:", error);
-    return res.status(500).json({ error: "Server error" });
+
+    return res.status(500).json({
+      error: "Server error",
+    });
   }
 };
 
@@ -174,7 +248,9 @@ const getQRCode = async (req, res) => {
   const { code } = req.params;
 
   if (!req.user || !req.user.id) {
-    return res.status(401).json({ error: "Authentication required" });
+    return res.status(401).json({
+      error: "Authentication required",
+    });
   }
 
   try {
@@ -189,13 +265,18 @@ const getQRCode = async (req, res) => {
       });
     }
 
-    const shortUrl = `${req.protocol}://${req.get("host")}/${code}`;
+    const shortUrl =
+      `${req.protocol}://${req.get("host")}/${code}`;
+
     const qr = await QRCode.toDataURL(shortUrl);
 
     return res.json({ qr });
   } catch (error) {
     console.error("Error generating short URL QR code:", error);
-    return res.status(500).json({ error: "Server error" });
+
+    return res.status(500).json({
+      error: "Server error",
+    });
   }
 };
 
@@ -204,7 +285,9 @@ const getOriginalQRCode = async (req, res) => {
   const { code } = req.params;
 
   if (!req.user || !req.user.id) {
-    return res.status(401).json({ error: "Authentication required" });
+    return res.status(401).json({
+      error: "Authentication required",
+    });
   }
 
   try {
@@ -224,25 +307,35 @@ const getOriginalQRCode = async (req, res) => {
     return res.json({ qr });
   } catch (error) {
     console.error("Error generating original URL QR code:", error);
-    return res.status(500).json({ error: "Server error" });
+
+    return res.status(500).json({
+      error: "Server error",
+    });
   }
 };
 
-// Get URLs belonging ONLY to the authenticated user
+// Get URLs belonging only to the authenticated user
 const getUserUrls = async (req, res) => {
   if (!req.user || !req.user.id) {
-    return res.status(401).json({ error: "Authentication required" });
+    return res.status(401).json({
+      error: "Authentication required",
+    });
   }
 
   try {
     const urls = await Url.find({
       userId: req.user.id,
-    }).sort({ createdAt: -1 });
+    }).sort({
+      createdAt: -1,
+    });
 
     return res.json(urls);
   } catch (error) {
     console.error("Error fetching user URLs:", error);
-    return res.status(500).json({ error: "Server error" });
+
+    return res.status(500).json({
+      error: "Server error",
+    });
   }
 };
 
@@ -251,7 +344,9 @@ const deleteUrl = async (req, res) => {
   const { code } = req.params;
 
   if (!req.user || !req.user.id) {
-    return res.status(401).json({ error: "Authentication required" });
+    return res.status(401).json({
+      error: "Authentication required",
+    });
   }
 
   try {
@@ -271,7 +366,10 @@ const deleteUrl = async (req, res) => {
     });
   } catch (error) {
     console.error("Error deleting URL:", error);
-    return res.status(500).json({ error: "Server error" });
+
+    return res.status(500).json({
+      error: "Server error",
+    });
   }
 };
 
