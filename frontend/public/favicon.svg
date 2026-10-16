@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
+  <!-- Rounded favicon container with brand primary gradient -->
+  <defs>
+    <linearGradient id="snipGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5" />
+      <stop offset="100%" stop-color="#3730A3" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Base tile with smooth squircle rounding -->
+  <rect width="64" height="64" rx="16" fill="url(#snipGrad)"/>
+  
+  <!-- QR Corner Finder elements & Link loop combined motif -->
+  <!-- Top Left Finder Eye -->
+  <rect x="13" y="13" width="16" height="16" rx="4" stroke="#FFFFFF" stroke-width="3" fill="none"/>
+  <rect x="18" y="18" width="6" height="6" rx="1.5" fill="#FFFFFF"/>
+  
+  <!-- Bottom Left Finder Eye -->
+  <rect x="13" y="35" width="16" height="16" rx="4" stroke="#FFFFFF" stroke-width="3" fill="none"/>
+  <rect x="18" y="40" width="6" height="6" rx="1.5" fill="#FFFFFF"/>
+  
+  <!-- Top Right Finder Eye -->
+  <rect x="35" y="13" width="16" height="16" rx="4" stroke="#FFFFFF" stroke-width="3" fill="none"/>
+  <rect x="40" y="18" width="6" height="6" rx="1.5" fill="#FFFFFF"/>
+  
+  <!-- Bottom Right: Kinetic dynamic link node / data matrix modules -->
+  <rect x="35" y="35" width="6" height="6" rx="1.5" fill="#60A5FA"/>
+  <rect x="45" y="35" width="6" height="6" rx="1.5" fill="#FFFFFF"/>
+  <rect x="35" y="45" width="6" height="6" rx="1.5" fill="#FFFFFF"/>
+  <rect x="45" y="45" width="6" height="6" rx="1.5" fill="#818CF8"/>
+  
+  <!-- Central accent link bridging node -->
+  <circle cx="32" cy="32" r="3" fill="#FFFFFF"/>
+</svg>

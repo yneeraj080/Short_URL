@@ -36,7 +36,9 @@ app.use(
 // Middleware
 app.use(express.json());
 
-// Configurable rate limiter
+// Configurable rate limiter for the API. Short-link redirects are not
+// limited: a popular link, or many visitors behind one NAT, would otherwise
+// start receiving 429s.
 const limiter = rateLimit({
   windowMs:
     Number(process.env.RATE_LIMIT_WINDOW_MS) ||
@@ -48,7 +50,7 @@ const limiter = rateLimit({
   },
 });
 
-app.use(limiter);
+app.use("/api", limiter);
 
 // URL routes
 const urlRoutes = require("./routes/url");

@@ -5,7 +5,7 @@ const auth=(req,res,next)=>{
     if(!authHeader){
         return res.status(401).json({error: "No token, authorization denied"})
     }
-    const token= authHeader.startsWith("Bearer")
+    const token= authHeader.startsWith("Bearer ")
     ? authHeader.slice(7)
     : authHeader;
     try{

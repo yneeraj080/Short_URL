@@ -1,11 +1,156 @@
+/* @import must come before every other rule, or browsers ignore it. */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@layer base {
+  /* Theme tokens as "R G B" so Tailwind opacity modifiers (bg-slate-50/70) work. */
+  :root {
+    color-scheme: light;
+    --canvas: 248 250 252;
+    --surface: 255 255 255;
+    --brand-soft: 238 242 255;
 
-body {
-  font-family: 'Plus Jakarta Sans', sans-serif;
-  background-color: #f8f9ff;
-  color: #0b1c30;
+    --slate-50: 248 250 252;
+    --slate-100: 241 245 249;
+    --slate-200: 226 232 240;
+    --slate-300: 203 213 225;
+    --slate-400: 148 163 184;
+    --slate-500: 100 116 139;
+    --slate-600: 71 85 105;
+    --slate-700: 51 65 85;
+    --slate-800: 30 41 59;
+    --slate-900: 15 23 42;
+
+    --emerald-50: 236 253 245;
+    --emerald-200: 167 243 208;
+    --emerald-500: 16 185 129;
+    --emerald-600: 5 150 105;
+    --emerald-700: 4 120 87;
+
+    --red-50: 254 242 242;
+    --red-100: 254 226 226;
+    --red-200: 254 202 202;
+    --red-500: 239 68 68;
+    --red-600: 220 38 38;
+    --red-700: 185 28 28;
+
+    --sky-50: 240 249 255;
+    --sky-600: 2 132 199;
+
+    --amber-500: 245 158 11;
+    --amber-600: 217 119 6;
+  }
+
+  /* Dark: the slate scale is inverted, status tints become deep washes. */
+  .dark {
+    color-scheme: dark;
+    --canvas: 9 13 22;
+    --surface: 15 23 42;
+    --brand-soft: 35 32 82;
+
+    --slate-50: 21 30 48;
+    --slate-100: 30 41 59;
+    --slate-200: 41 53 74;
+    --slate-300: 56 70 94;
+    --slate-400: 100 116 139;
+    --slate-500: 148 163 184;
+    --slate-600: 168 180 199;
+    --slate-700: 203 213 225;
+    --slate-800: 226 232 240;
+    --slate-900: 241 245 249;
+
+    --emerald-50: 6 46 34;
+    --emerald-200: 6 95 70;
+    --emerald-500: 16 185 129;
+    --emerald-600: 52 211 153;
+    --emerald-700: 110 231 183;
+
+    --red-50: 59 13 18;
+    --red-100: 76 16 24;
+    --red-200: 127 29 29;
+    --red-500: 239 68 68;
+    --red-600: 248 113 113;
+    --red-700: 252 165 165;
+
+    --sky-50: 12 42 61;
+    --sky-600: 56 189 248;
+
+    --amber-500: 245 158 11;
+    --amber-600: 251 191 36;
+  }
+
+  /* Indigo text needs more lightness to stay readable on dark surfaces. */
+  .dark .text-brand,
+  .dark .hover\:text-brand:hover {
+    color: #a5b4fc;
+  }
+  .dark .text-brand-hover {
+    color: #c7d2fe;
+  }
+
+  body {
+    @apply bg-canvas font-sans text-slate-900 antialiased transition-colors duration-200;
+  }
+
+  h1, h2, h3 {
+    @apply tracking-tight;
+  }
+
+  /* Edge/IE add their own password reveal button; we provide one. */
+  input::-ms-reveal,
+  input::-ms-clear {
+    display: none;
+  }
+}
+
+@layer components {
+  /* Level 1 surface: white, hairline border, micro-shadow */
+  .card {
+    @apply rounded-2xl border border-slate-200 bg-surface shadow-card;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition
+      focus:outline-none focus-visible:shadow-focus disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-brand text-white hover:bg-brand-hover active:bg-brand-active;
+  }
+  .btn-secondary {
+    @apply btn border border-slate-200 bg-surface text-slate-900 hover:border-slate-300 hover:bg-slate-50;
+  }
+  .btn-ghost {
+    @apply btn px-3 font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900;
+  }
+  .btn-danger {
+    @apply btn border border-red-200 bg-red-50 text-red-700 hover:bg-red-100;
+  }
+
+  .input {
+    @apply h-11 w-full rounded-lg border border-slate-200 bg-surface px-3.5 text-sm text-slate-900
+      placeholder:text-slate-400 transition focus:border-brand focus:outline-none focus:shadow-focus;
+  }
+  .label {
+    @apply mb-1.5 block text-sm font-medium text-slate-700;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-wide;
+  }
+
+  /* Short slugs are always monospace so 0/O and l/1 stay distinct */
+  .slug {
+    @apply rounded-md bg-brand-soft px-2 py-0.5 font-mono text-[13px] font-medium text-brand-hover;
+  }
+
+  .eyebrow {
+    @apply font-mono text-[11px] font-semibold uppercase tracking-widest text-brand;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
 }

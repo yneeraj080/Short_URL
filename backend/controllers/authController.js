@@ -1,8 +1,20 @@
 const bcrypt= require("bcryptjs");
 const jwt= require("jsonwebtoken");
+const { validationResult } = require("express-validator");
 const User = require("../models/User");
 
+// Returns true (and sends a 400) when express-validator found problems.
+const rejectInvalid=(req,res)=>{
+    const errors=validationResult(req);
+    if(errors.isEmpty()){
+        return false;
+    }
+    res.status(400).json({error: errors.array()[0].msg, errors: errors.array()});
+    return true;
+};
+
 const register=async(req,res)=>{
+    if(rejectInvalid(req,res)) return;
     const {name, email,password}=req.body;
     try{
         const existing = await User.findOne({email});
@@ -27,10 +39,15 @@ const register=async(req,res)=>{
             },
         });
     }catch(error){
+        // Two concurrent registrations can both pass the findOne check.
+        if(error.code===11000){
+            return res.status(400).json({error:"Email already registered"});
+        }
         res.status(500).json({error: "Server error"});
     }
 };
 const login=async(req,res)=>{
+    if(rejectInvalid(req,res)) return;
     const {email, password}=req.body;
     try{
         const user=await User.findOne({email});
@@ -57,6 +74,7 @@ const login=async(req,res)=>{
     }
 };
 const changePassword = async(req,res)=>{
+    if(rejectInvalid(req,res)) return;
     const{currentPassword, newPassword}=req.body;
     try{
         const user=await User.findById(req.user.id);

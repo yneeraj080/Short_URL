@@ -17,6 +17,12 @@ async function processMessages(workerRedis, messages) {
   const invalidIds = [];
 
   for (const entry of messages) {
+    // XAUTOCLAIM returns null for entries deleted from the stream
+    // (e.g. trimmed) while still pending. They have no ID to ack.
+    if (!entry) {
+      continue;
+    }
+
     const message = entry.message || {};
     const clickedAt = new Date(message.clickedAt);
 
@@ -77,8 +83,12 @@ async function processMessages(workerRedis, messages) {
     ...invalidIds,
   ];
 
-  for (const id of idsToAcknowledge) {
-    await workerRedis.xAck(STREAM_KEY, GROUP_NAME, id);
+  if (idsToAcknowledge.length > 0) {
+    await workerRedis.xAck(
+      STREAM_KEY,
+      GROUP_NAME,
+      idsToAcknowledge
+    );
   }
 }
 

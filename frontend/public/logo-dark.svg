@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 40" fill="none">
+  <rect x="4" y="6" width="28" height="28" rx="8" fill="#4F46E5"/>
+  <path d="M14 20C14 16.6863 16.6863 14 20 14H22" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M22 26H20C16.6863 26 14 23.3137 14 20" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <rect x="21" y="11" width="3" height="3" rx="0.5" fill="white"/>
+  <rect x="21" y="26" width="3" height="3" rx="0.5" fill="white"/>
+  <text x="40" y="26" font-family="Plus Jakarta Sans, Inter, sans-serif" font-size="20" font-weight="700" fill="#F1F5F9" letter-spacing="-0.5px">Snip<tspan fill="#A5B4FC">QR</tspan></text>
+</svg>

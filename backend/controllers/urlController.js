@@ -1,10 +1,26 @@
 
 const ClickEvent = require("../models/ClickEvent");
 const Url = require("../models/Url");
-const { nanoid } = require("nanoid");
+const crypto = require("crypto");
 const QRCode = require("qrcode");
 const { validationResult } = require("express-validator");
 const UAParser = require("ua-parser-js");
+
+// URL-safe alphabet (same as nanoid). 64 symbols, so masking a random
+// byte with 63 picks each symbol with equal probability.
+const CODE_ALPHABET =
+  "useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict";
+
+const generateShortCode = (size = 6) => {
+  const bytes = crypto.randomBytes(size);
+  let code = "";
+
+  for (let i = 0; i < size; i++) {
+    code += CODE_ALPHABET[bytes[i] & 63];
+  }
+
+  return code;
+};
 
 // Create a short URL for the authenticated user
 const shortenUrl = async (req, res) => {
@@ -20,7 +36,13 @@ const shortenUrl = async (req, res) => {
     });
   }
 
-  const { originalUrl, alias, expiresIn } = req.body;
+  const { alias, expiresIn } = req.body;
+
+  // "example.com" passes validation but would become a relative
+  // redirect (/example.com), so default to https://.
+  const originalUrl = /^https?:\/\//i.test(req.body.originalUrl)
+    ? req.body.originalUrl
+    : `https://${req.body.originalUrl}`;
 
   try {
     if (alias) {
@@ -35,7 +57,7 @@ const shortenUrl = async (req, res) => {
       }
     }
 
-    const shortCode = alias || nanoid(6);
+    const shortCode = alias || generateShortCode(6);
 
     const expiresAt = expiresIn
       ? new Date(
@@ -188,6 +210,12 @@ const lookupUrl = async (req, res) => {
     if (!url) {
       return res.status(404).json({
         error: "Short URL not found",
+      });
+    }
+
+    if (url.expiresAt && url.expiresAt <= new Date()) {
+      return res.status(410).json({
+        error: "Short URL has expired",
       });
     }
 
@@ -447,6 +475,9 @@ const deleteUrl = async (req, res) => {
         error: "Short URL not found",
       });
     }
+
+    // Remove the URL's click events so they are not orphaned.
+    await ClickEvent.deleteMany({ urlId: deletedUrl._id });
 
     // Invalidate the cached destination after deletion.
     try {
