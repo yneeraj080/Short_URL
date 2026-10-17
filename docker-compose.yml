@@ -1,6 +1,9 @@
 services:
   backend:
     build: ./backend
+    # cluster.js runs WEB_CONCURRENCY copies of index.js (one per CPU core you
+    # want to use). Default 1; set e.g. WEB_CONCURRENCY=4 in the shell to change.
+    command: ["node", "cluster.js"]
     ports:
       - "5000:5000"
     env_file:
@@ -8,6 +11,7 @@ services:
     environment:
       REDIS_URL: redis://redis:6379
       RUN_ANALYTICS_WORKER: "false"
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
     depends_on:
       mongo:
         condition: service_started

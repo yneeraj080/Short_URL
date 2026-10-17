@@ -8,6 +8,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "start:cluster": "node cluster.js",
     "worker": "node worker.js",
     "dev": "nodemon index.js"
   },
