@@ -6,8 +6,7 @@ const QRCode = require("qrcode");
 const { validationResult } = require("express-validator");
 const UAParser = require("ua-parser-js");
 
-// URL-safe alphabet (same as nanoid). 64 symbols, so masking a random
-// byte with 63 picks each symbol with equal probability.
+
 const CODE_ALPHABET =
   "useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict";
 
@@ -37,9 +36,6 @@ const shortenUrl = async (req, res) => {
   }
 
   const { alias, expiresIn } = req.body;
-
-  // "example.com" passes validation but would become a relative
-  // redirect (/example.com), so default to https://.
   const originalUrl = /^https?:\/\//i.test(req.body.originalUrl)
     ? req.body.originalUrl
     : `https://${req.body.originalUrl}`;
@@ -107,19 +103,17 @@ const redirectUrl = async (req, res) => {
 
   try {
     let url = null;
-
-    // 1. Try Redis cache first
+    let cacheHit = false;
     try {
       const cached = await redis.get(cacheKey);
 
       if (cached) {
         url = JSON.parse(cached);
+        cacheHit = true;
       }
     } catch (error) {
       console.error("Redis cache read failed:", error.message);
     }
-
-    // 2. Read MongoDB when the cache misses
     if (!url) {
       const record = await Url.findOne({
         shortCode: code,
@@ -141,8 +135,6 @@ const redirectUrl = async (req, res) => {
           : null,
       };
     }
-
-    // 3. Check expiration, including cached URLs
     if (url.expiresAt && new Date(url.expiresAt) <= now) {
       await Url.deleteOne({ _id: url._id });
 
@@ -156,24 +148,20 @@ const redirectUrl = async (req, res) => {
         error: "Short URL has expired",
       });
     }
-
-    // 4. Cache the destination for 60 seconds
-    try {
-      await redis.set(cacheKey, JSON.stringify(url), {
-        EX: 60,
-      });
-    } catch (error) {
-      console.error("Redis cache write failed:", error.message);
+    if (!cacheHit) {
+      try {
+        await redis.set(cacheKey, JSON.stringify(url), {
+          EX: 60,
+        });
+      } catch (error) {
+        console.error("Redis cache write failed:", error.message);
+      }
     }
-
-    // 5. Extract basic click information
     const parser = new UAParser(req.headers["user-agent"]);
 
     const browser = parser.getBrowser().name || "Unknown";
     const device = parser.getDevice().type || "Desktop";
     const os = parser.getOS().name || "Unknown";
-
-    // 6. Publish the click event for the analytics worker
     try {
       await redis.xAdd("url-click-events", "*", {
         urlId: String(url._id),
@@ -183,11 +171,8 @@ const redirectUrl = async (req, res) => {
         os,
       });
     } catch (error) {
-      // Keep the redirect available if analytics publishing fails.
       console.error("Failed to publish click event:", error.message);
     }
-
-    // 7. Redirect without waiting for MongoDB analytics writes
     return res.redirect(url.originalUrl);
   } catch (error) {
     console.error("Error redirecting short URL:", error);
@@ -256,8 +241,6 @@ const getStats = async (req, res) => {
         error: "Short URL not found",
       });
     }
-
-    // Read the new click count and recent events concurrently.
     const [newClickCount, recentEvents] = await Promise.all([
       ClickEvent.countDocuments({
         urlId: url._id,
@@ -271,8 +254,6 @@ const getStats = async (req, res) => {
         .select("clickedAt browser device os")
         .lean(),
     ]);
-
-    // Preserve analytics from the old URL document.
     const oldAnalytics = (url.analytics || []).map((event) => ({
       _id: event._id,
       clickedAt: event.clickedAt,
@@ -280,8 +261,6 @@ const getStats = async (req, res) => {
       device: event.device || "Desktop",
       os: event.os || "Unknown",
     }));
-
-    // Convert the new ClickEvent documents.
     const newAnalytics = recentEvents.map((event) => ({
       _id: event._id,
       clickedAt: event.clickedAt,
@@ -289,8 +268,6 @@ const getStats = async (req, res) => {
       device: event.device || "Desktop",
       os: event.os || "Unknown",
     }));
-
-    // Merge both sources and return at most 1,000 recent records.
     const analytics = [...oldAnalytics, ...newAnalytics]
       .sort(
         (a, b) =>
@@ -302,8 +279,6 @@ const getStats = async (req, res) => {
     return res.json({
       originalUrl: url.originalUrl,
       shortCode: url.shortCode,
-
-      // Legacy total plus events in the new collection.
       clicks: (url.clicks || 0) + newClickCount,
 
       createdAt: url.createdAt,
@@ -411,8 +386,6 @@ const getUserUrls = async (req, res) => {
     if (urls.length === 0) {
       return res.json([]);
     }
-
-    // Count new analytics events for all these URLs in one query.
     const urlIds = urls.map((url) => url._id);
 
     const clickCounts = await ClickEvent.aggregate([
@@ -435,8 +408,6 @@ const getUserUrls = async (req, res) => {
         item.count,
       ])
     );
-
-    // Combine legacy totals with newly stored click events.
     const result = urls.map((url) => ({
       ...url,
       clicks:
@@ -476,10 +447,7 @@ const deleteUrl = async (req, res) => {
       });
     }
 
-    // Remove the URL's click events so they are not orphaned.
     await ClickEvent.deleteMany({ urlId: deletedUrl._id });
-
-    // Invalidate the cached destination after deletion.
     try {
       const redis = req.app.locals.redis;
 
