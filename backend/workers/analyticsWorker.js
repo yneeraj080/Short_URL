@@ -1,10 +1,11 @@
 
+const os = require("os");
 const mongoose = require("mongoose");
 const ClickEvent = require("../models/ClickEvent");
 
 const STREAM_KEY = "url-click-events";
 const GROUP_NAME = "url-click-workers";
-const CONSUMER_NAME = `worker-${process.pid}`;
+const CONSUMER_NAME = `worker-${os.hostname()}-${process.pid}`;
 
 const BATCH_SIZE = 100;
 const MIN_IDLE_MS = 30000;
@@ -17,8 +18,6 @@ async function processMessages(workerRedis, messages) {
   const invalidIds = [];
 
   for (const entry of messages) {
-    // XAUTOCLAIM returns null for entries deleted from the stream
-    // (e.g. trimmed) while still pending. They have no ID to ack.
     if (!entry) {
       continue;
     }
@@ -61,8 +60,6 @@ async function processMessages(workerRedis, messages) {
         ordered: false,
       });
     } catch (error) {
-      // A retry may encounter events already saved by an
-      // earlier attempt. Confirm that every event exists.
       const saved = await ClickEvent.find({
         streamId: {
           $in: events.map((event) => event.streamId),
@@ -76,8 +73,6 @@ async function processMessages(workerRedis, messages) {
       }
     }
   }
-
-  // Acknowledge only after valid events are persisted.
   const idsToAcknowledge = [
     ...events.map((event) => event.streamId),
     ...invalidIds,
@@ -100,8 +95,6 @@ async function startAnalyticsWorker(redisClient) {
   });
 
   await workerRedis.connect();
-
-  // Ensure the unique streamId index is ready before processing.
   await ClickEvent.init();
 
   try {
@@ -123,7 +116,6 @@ async function startAnalyticsWorker(redisClient) {
 
   while (true) {
     try {
-      // Recover messages left pending by a previous worker.
       const claimed = await workerRedis.xAutoClaim(
         STREAM_KEY,
         GROUP_NAME,
@@ -139,8 +131,6 @@ async function startAnalyticsWorker(redisClient) {
         await processMessages(workerRedis, claimed.messages);
         continue;
       }
-
-      // Otherwise, read new click events.
       const streams = await workerRedis.xReadGroup(
         GROUP_NAME,
         CONSUMER_NAME,

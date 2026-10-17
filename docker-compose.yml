@@ -7,6 +7,20 @@ services:
       - ./backend/.env
     environment:
       REDIS_URL: redis://redis:6379
+      RUN_ANALYTICS_WORKER: "false"
+    depends_on:
+      mongo:
+        condition: service_started
+      redis:
+        condition: service_healthy
+  worker:
+    build: ./backend
+    command: ["node", "worker.js"]
+    env_file:
+      - ./backend/.env
+    environment:
+      REDIS_URL: redis://redis:6379
+    restart: unless-stopped
     depends_on:
       mongo:
         condition: service_started

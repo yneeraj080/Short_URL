@@ -36,9 +36,6 @@ app.use(
 // Middleware
 app.use(express.json());
 
-// Configurable rate limiter for the API. Short-link redirects are not
-// limited: a popular link, or many visitors behind one NAT, would otherwise
-// start receiving 429s.
 const limiter = rateLimit({
   windowMs:
     Number(process.env.RATE_LIMIT_WINDOW_MS) ||
@@ -73,20 +70,19 @@ const PORT = process.env.PORT || 5000;
 
 async function startServer() {
   try {
-    // Connect to MongoDB
     await mongoose.connect(process.env.MONGO_URI);
     console.log("MongoDB connected successfully");
 
-    // Connect to Redis
+    
     await redisClient.connect();
     console.log("Redis connected successfully");
-
-    // Start the analytics worker in the background
-    startAnalyticsWorker(redisClient).catch((error) => {
-      console.error("Failed to start analytics worker:", error);
-    });
-
-    // Start the Express server
+    if (process.env.RUN_ANALYTICS_WORKER !== "false") {
+      startAnalyticsWorker(redisClient).catch((error) => {
+        console.error("Failed to start analytics worker:", error);
+      });
+    } else {
+      console.log("In-process analytics worker disabled (RUN_ANALYTICS_WORKER=false)");
+    }
     app.listen(PORT, () => {
       console.log(`Server is working on port ${PORT}`);
     });
