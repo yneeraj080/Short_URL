@@ -4,7 +4,16 @@ const Url = require("../models/Url");
 const crypto = require("crypto");
 const QRCode = require("qrcode");
 const { validationResult } = require("express-validator");
-const UAParser = require("ua-parser-js");
+
+// HTTP headers must be ASCII. new URL() percent-encodes anything else
+// (e.g. https://example.com/café), which is what res.redirect() did for us.
+const toLocationHeader = (originalUrl) => {
+  try {
+    return new URL(originalUrl).href;
+  } catch {
+    return encodeURI(originalUrl);
+  }
+};
 
 
 const CODE_ALPHABET =
@@ -130,6 +139,7 @@ const redirectUrl = async (req, res) => {
       url = {
         _id: String(record._id),
         originalUrl: record.originalUrl,
+        location: toLocationHeader(record.originalUrl),
         expiresAt: record.expiresAt
           ? new Date(record.expiresAt).toISOString()
           : null,
@@ -157,23 +167,25 @@ const redirectUrl = async (req, res) => {
         console.error("Redis cache write failed:", error.message);
       }
     }
-    const parser = new UAParser(req.headers["user-agent"]);
-
-    const browser = parser.getBrowser().name || "Unknown";
-    const device = parser.getDevice().type || "Desktop";
-    const os = parser.getOS().name || "Unknown";
+    // Publish the raw user-agent; the analytics worker parses it into
+    // browser/device/OS off the hot path (parsing was ~10% of redirect CPU).
     try {
       await redis.xAdd("url-click-events", "*", {
         urlId: String(url._id),
         clickedAt: now.toISOString(),
-        browser,
-        device,
-        os,
+        ua: (req.headers["user-agent"] || "").slice(0, 512),
       });
     } catch (error) {
       console.error("Failed to publish click event:", error.message);
     }
-    return res.redirect(url.originalUrl);
+
+    // Plain 302. res.redirect() also builds an HTML body and negotiates
+    // content types, which a browser following a redirect never uses.
+    res.writeHead(302, {
+      Location: url.location || toLocationHeader(url.originalUrl),
+      "Content-Length": 0,
+    });
+    return res.end();
   } catch (error) {
     console.error("Error redirecting short URL:", error);
 

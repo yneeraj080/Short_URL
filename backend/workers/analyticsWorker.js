@@ -1,6 +1,7 @@
 
 const os = require("os");
 const mongoose = require("mongoose");
+const UAParser = require("ua-parser-js");
 const ClickEvent = require("../models/ClickEvent");
 
 const STREAM_KEY = "url-click-events";
@@ -34,13 +35,23 @@ async function processMessages(workerRedis, messages) {
       continue;
     }
 
+    // New events carry the raw user-agent (`ua`) and are parsed here, off the
+    // redirect path. Older events in the stream already have the parsed fields.
+    let { browser, device, os: osName } = message;
+    if (message.ua !== undefined) {
+      const parser = new UAParser(message.ua);
+      browser = parser.getBrowser().name;
+      device = parser.getDevice().type;
+      osName = parser.getOS().name;
+    }
+
     events.push({
       streamId: entry.id,
       urlId: message.urlId,
       clickedAt,
-      browser: message.browser || "Unknown",
-      device: message.device || "Desktop",
-      os: message.os || "Unknown",
+      browser: browser || "Unknown",
+      device: device || "Desktop",
+      os: osName || "Unknown",
     });
   }
 
