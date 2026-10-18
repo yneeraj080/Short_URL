@@ -6,6 +6,17 @@ const QRCode = require("qrcode");
 const { validationResult } = require("express-validator");
 const hotCache = require("../utils/hotCache");
 
+// Safety cap on the click stream. Normally the analytics worker trims processed
+// entries (see trimProcessedEntries), keeping the stream tiny. This cap only
+// matters if the worker is down for a long time: beyond ~STREAM_MAXLEN unsaved
+// clicks the oldest are dropped, instead of Redis running out of memory.
+// STREAM_MAXLEN=0 disables the cap.
+const STREAM_MAXLEN = Number(process.env.STREAM_MAXLEN ?? 1000000);
+const STREAM_TRIM =
+  STREAM_MAXLEN > 0
+    ? { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAXLEN } }
+    : undefined;
+
 // HTTP headers must be ASCII. new URL() percent-encodes anything else
 // (e.g. https://example.com/café), which is what res.redirect() did for us.
 const toLocationHeader = (originalUrl) => {
@@ -186,11 +197,16 @@ const redirectUrl = async (req, res) => {
     // batching was tested in 1.5 and was slower; the Redis client already
     // pipelines concurrent commands.)
     try {
-      await redis.xAdd("url-click-events", "*", {
-        urlId: String(url._id),
-        clickedAt: now.toISOString(),
-        ua: (req.headers["user-agent"] || "").slice(0, 512),
-      });
+      await redis.xAdd(
+        "url-click-events",
+        "*",
+        {
+          urlId: String(url._id),
+          clickedAt: now.toISOString(),
+          ua: (req.headers["user-agent"] || "").slice(0, 512),
+        },
+        STREAM_TRIM
+      );
     } catch (error) {
       console.error("Failed to publish click event:", error.message);
     }

@@ -10,6 +10,8 @@ const CONSUMER_NAME = `worker-${os.hostname()}-${process.pid}`;
 
 const BATCH_SIZE = 100;
 const MIN_IDLE_MS = 30000;
+const TRIM_INTERVAL_MS = 5000;
+const TRIM_ROUNDS_PER_CYCLE = 20;
 
 const sleep = (ms) =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -98,6 +100,46 @@ async function processMessages(workerRedis, messages) {
   }
 }
 
+// Stream IDs are "<ms>-<seq>"; compare them numerically.
+const idLess = (a, b) => {
+  const [am, as] = a.split("-").map(BigInt);
+  const [bm, bs] = b.split("-").map(BigInt);
+  return am < bm || (am === bm && as < bs);
+};
+
+// Remove stream entries the consumer group has finished with, so Redis memory
+// doesn't grow forever. Entries at or after the oldest one still needed are
+// kept: anything not yet delivered (after last-delivered-id) and anything
+// delivered but not yet acknowledged (pending, from firstId). If this worker
+// is down, nothing is trimmed.
+async function trimProcessedEntries(workerRedis) {
+  const groups = await workerRedis.xInfoGroups(STREAM_KEY);
+  const group = groups.find((g) => g.name === GROUP_NAME);
+  if (!group) return 0;
+
+  let keepFrom = group["last-delivered-id"];
+  if (!keepFrom || keepFrom === "0-0") return 0;
+
+  const pending = await workerRedis.xPending(STREAM_KEY, GROUP_NAME);
+  if (pending.pending > 0 && pending.firstId && idLess(pending.firstId, keepFrom)) {
+    keepFrom = pending.firstId;
+  }
+
+  // "~" lets Redis trim whole internal nodes only: much cheaper, and it may
+  // keep a few extra entries, never fewer. Redis also caps each approximate
+  // trim at ~10,000 entries so one call can't block it; repeat a few times per
+  // cycle to work through a backlog (up to ~200k entries every 5 s).
+  let removed = 0;
+  for (let i = 0; i < TRIM_ROUNDS_PER_CYCLE; i++) {
+    const n = await workerRedis.xTrim(STREAM_KEY, "MINID", keepFrom, {
+      strategyModifier: "~",
+    });
+    removed += n;
+    if (n === 0) break;
+  }
+  return removed;
+}
+
 async function startAnalyticsWorker(redisClient) {
   const workerRedis = redisClient.duplicate();
 
@@ -124,9 +166,18 @@ async function startAnalyticsWorker(redisClient) {
   console.log("Redis analytics worker started");
 
   let pendingCursor = "0-0";
+  let lastTrim = 0;
 
   while (true) {
     try {
+      if (Date.now() - lastTrim >= TRIM_INTERVAL_MS) {
+        lastTrim = Date.now();
+        const removed = await trimProcessedEntries(workerRedis);
+        if (removed > 0) {
+          console.log(`Trimmed ${removed} processed click events from the stream`);
+        }
+      }
+
       const claimed = await workerRedis.xAutoClaim(
         STREAM_KEY,
         GROUP_NAME,
