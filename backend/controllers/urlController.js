@@ -181,6 +181,10 @@ const redirectUrl = async (req, res) => {
     }
     // Publish the raw user-agent; the analytics worker parses it into
     // browser/device/OS off the hot path (parsing was ~10% of redirect CPU).
+    // Awaited on purpose: the 302 is only sent once Redis has the click, so a
+    // crash can't lose clicks for redirects that already happened. (Manual
+    // batching was tested in 1.5 and was slower; the Redis client already
+    // pipelines concurrent commands.)
     try {
       await redis.xAdd("url-click-events", "*", {
         urlId: String(url._id),

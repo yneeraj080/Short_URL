@@ -88,9 +88,30 @@ async function startServer() {
     } else {
       console.log("In-process analytics worker disabled (RUN_ANALYTICS_WORKER=false)");
     }
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       console.log(`Server is working on port ${PORT}`);
     });
+
+    // Graceful stop (docker stop, deploy, cluster restart): refuse new
+    // connections, let in-progress requests finish (each one waits for its
+    // click event to reach Redis), then close connections and exit.
+    let stopping = false;
+    const shutdown = async (signal) => {
+      if (stopping) return;
+      stopping = true;
+      setTimeout(() => process.exit(1), 8000).unref();
+      server.close();
+      server.closeIdleConnections();
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      server.closeAllConnections();
+      console.log(`Received ${signal}: stopped accepting requests, exiting`);
+      // quit() waits for commands already sent (e.g. click XADDs) to finish.
+      await redisClient.quit().catch(() => {});
+      await mongoose.disconnect().catch(() => {});
+      process.exit(0);
+    };
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
   } catch (error) {
     console.error("Server startup failed:", error);
 
