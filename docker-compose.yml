@@ -12,6 +12,9 @@ services:
       REDIS_URL: redis://redis:6379
       RUN_ANALYTICS_WORKER: "false"
       WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
+      # In-memory hot-link cache per API process (ms, 0 = off). A deleted link
+      # can keep redirecting this long on processes that didn't handle the delete.
+      HOT_CACHE_TTL_MS: ${HOT_CACHE_TTL_MS:-5000}
     depends_on:
       mongo:
         condition: service_started

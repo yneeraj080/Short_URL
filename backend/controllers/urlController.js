@@ -4,6 +4,7 @@ const Url = require("../models/Url");
 const crypto = require("crypto");
 const QRCode = require("qrcode");
 const { validationResult } = require("express-validator");
+const hotCache = require("../utils/hotCache");
 
 // HTTP headers must be ASCII. new URL() percent-encodes anything else
 // (e.g. https://example.com/café), which is what res.redirect() did for us.
@@ -111,17 +112,22 @@ const redirectUrl = async (req, res) => {
   const cacheKey = `url:${code}`;
 
   try {
-    let url = null;
-    let cacheHit = false;
-    try {
-      const cached = await redis.get(cacheKey);
+    // 1. In-process hot cache (a few seconds), then Redis, then MongoDB.
+    let url = hotCache.get(code) || null;
+    const fromMemory = Boolean(url);
+    let cacheHit = fromMemory;
 
-      if (cached) {
-        url = JSON.parse(cached);
-        cacheHit = true;
+    if (!url) {
+      try {
+        const cached = await redis.get(cacheKey);
+
+        if (cached) {
+          url = JSON.parse(cached);
+          cacheHit = true;
+        }
+      } catch (error) {
+        console.error("Redis cache read failed:", error.message);
       }
-    } catch (error) {
-      console.error("Redis cache read failed:", error.message);
     }
     if (!url) {
       const record = await Url.findOne({
@@ -146,6 +152,7 @@ const redirectUrl = async (req, res) => {
       };
     }
     if (url.expiresAt && new Date(url.expiresAt) <= now) {
+      hotCache.remove(code);
       await Url.deleteOne({ _id: url._id });
 
       try {
@@ -166,6 +173,11 @@ const redirectUrl = async (req, res) => {
       } catch (error) {
         console.error("Redis cache write failed:", error.message);
       }
+    }
+    // Only store entries fetched from Redis/MongoDB. Refreshing on memory hits
+    // would keep a deleted-but-popular link alive forever on this process.
+    if (!fromMemory) {
+      hotCache.set(code, url);
     }
     // Publish the raw user-agent; the analytics worker parses it into
     // browser/device/OS off the hot path (parsing was ~10% of redirect CPU).
@@ -460,6 +472,8 @@ const deleteUrl = async (req, res) => {
     }
 
     await ClickEvent.deleteMany({ urlId: deletedUrl._id });
+    // This process forgets it now; other API processes within HOT_CACHE_TTL_MS.
+    hotCache.remove(code);
     try {
       const redis = req.app.locals.redis;
 
