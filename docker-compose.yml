@@ -47,6 +47,9 @@ services:
 
   mongo:
     image: mongo:7
+    # Cap the WiredTiger cache (default ~50% of RAM): the 1 GB EC2 server ran
+    # out of memory with MongoDB, the API, Redis and a Docker build together.
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
     volumes:
       - mongo-data:/data/db
 

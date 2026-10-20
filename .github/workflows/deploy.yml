@@ -22,10 +22,19 @@ jobs:
 
           ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
 
-          ssh -i ~/.ssh/deploy_key "$EC2_USERNAME@$EC2_HOST" << 'REMOTE'
+          # Keepalives stop the SSH session from dropping during long builds.
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+            -i ~/.ssh/deploy_key "$EC2_USERNAME@$EC2_HOST" << 'REMOTE'
             set -e
             cd /home/ubuntu/Short_URL
             git pull origin main
-            docker compose up -d --build
+            # Build one image at a time: building everything at once ran the
+            # 1 GB server out of memory (OOM killed MongoDB and the API).
+            docker compose build backend
+            docker compose build worker
+            docker compose build frontend
+            docker compose up -d
+            # Remove old, unused images so the disk doesn't fill up over time.
+            docker image prune -f
             docker compose ps
           REMOTE
