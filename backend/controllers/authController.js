@@ -46,6 +46,7 @@ const register=async(req,res)=>{
         res.status(500).json({error: "Server error"});
     }
 };
+
 const login=async(req,res)=>{
     if(rejectInvalid(req,res)) return;
     const {email, password}=req.body;
@@ -73,6 +74,7 @@ const login=async(req,res)=>{
         res.status(500).json({error: "Server error"})
     }
 };
+
 const changePassword = async(req,res)=>{
     if(rejectInvalid(req,res)) return;
     const{currentPassword, newPassword}=req.body;

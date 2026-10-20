@@ -9,8 +9,6 @@ const startAnalyticsWorker = require("./workers/analyticsWorker");
 dotenv.config();
 
 const app = express();
-
-// Redis client
 const redisClient = createClient({
   url: process.env.REDIS_URL || "redis://localhost:6379",
 });
@@ -19,15 +17,9 @@ redisClient.on("error", (err) => {
   console.error("Redis Client Error:", err);
 });
 
-// Make Redis available to controllers through req.app.locals.redis
 app.locals.redis = redisClient;
 
 app.disable("x-powered-by");
-
-// Redirect route, registered before cors/json middleware: a redirect is a GET
-// with no body that browsers follow directly, so it needs neither (profiling
-// showed they cost ~17% of the CPU per redirect). `/:code` only matches
-// single-segment paths, so /api/... routes are unaffected.
 const { redirectUrl } = require("./controllers/urlController");
 app.get("/:code", redirectUrl);
 
@@ -69,8 +61,6 @@ app.use("/api/auth", authRoutes);
 // Error handler
 const errorHandler = require("./middleware/errorHandler");
 app.use(errorHandler);
-
-// Start server only after MongoDB and Redis connect
 const PORT = process.env.PORT || 5000;
 
 async function startServer() {
@@ -91,10 +81,6 @@ async function startServer() {
     const server = app.listen(PORT, () => {
       console.log(`Server is working on port ${PORT}`);
     });
-
-    // Graceful stop (docker stop, deploy, cluster restart): refuse new
-    // connections, let in-progress requests finish (each one waits for its
-    // click event to reach Redis), then close connections and exit.
     let stopping = false;
     const shutdown = async (signal) => {
       if (stopping) return;

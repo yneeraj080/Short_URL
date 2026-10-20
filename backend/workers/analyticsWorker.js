@@ -36,9 +36,6 @@ async function processMessages(workerRedis, messages) {
       invalidIds.push(entry.id);
       continue;
     }
-
-    // New events carry the raw user-agent (`ua`) and are parsed here, off the
-    // redirect path. Older events in the stream already have the parsed fields.
     let { browser, device, os: osName } = message;
     if (message.ua !== undefined) {
       const parser = new UAParser(message.ua);
@@ -99,19 +96,11 @@ async function processMessages(workerRedis, messages) {
     );
   }
 }
-
-// Stream IDs are "<ms>-<seq>"; compare them numerically.
 const idLess = (a, b) => {
   const [am, as] = a.split("-").map(BigInt);
   const [bm, bs] = b.split("-").map(BigInt);
   return am < bm || (am === bm && as < bs);
 };
-
-// Remove stream entries the consumer group has finished with, so Redis memory
-// doesn't grow forever. Entries at or after the oldest one still needed are
-// kept: anything not yet delivered (after last-delivered-id) and anything
-// delivered but not yet acknowledged (pending, from firstId). If this worker
-// is down, nothing is trimmed.
 async function trimProcessedEntries(workerRedis) {
   const groups = await workerRedis.xInfoGroups(STREAM_KEY);
   const group = groups.find((g) => g.name === GROUP_NAME);
@@ -124,11 +113,6 @@ async function trimProcessedEntries(workerRedis) {
   if (pending.pending > 0 && pending.firstId && idLess(pending.firstId, keepFrom)) {
     keepFrom = pending.firstId;
   }
-
-  // "~" lets Redis trim whole internal nodes only: much cheaper, and it may
-  // keep a few extra entries, never fewer. Redis also caps each approximate
-  // trim at ~10,000 entries so one call can't block it; repeat a few times per
-  // cycle to work through a backlog (up to ~200k entries every 5 s).
   let removed = 0;
   for (let i = 0; i < TRIM_ROUNDS_PER_CYCLE; i++) {
     const n = await workerRedis.xTrim(STREAM_KEY, "MINID", keepFrom, {

@@ -6,19 +6,11 @@ const QRCode = require("qrcode");
 const { validationResult } = require("express-validator");
 const hotCache = require("../utils/hotCache");
 
-// Safety cap on the click stream. Normally the analytics worker trims processed
-// entries (see trimProcessedEntries), keeping the stream tiny. This cap only
-// matters if the worker is down for a long time: beyond ~STREAM_MAXLEN unsaved
-// clicks the oldest are dropped, instead of Redis running out of memory.
-// STREAM_MAXLEN=0 disables the cap.
 const STREAM_MAXLEN = Number(process.env.STREAM_MAXLEN ?? 1000000);
 const STREAM_TRIM =
   STREAM_MAXLEN > 0
     ? { TRIM: { strategy: "MAXLEN", strategyModifier: "~", threshold: STREAM_MAXLEN } }
     : undefined;
-
-// HTTP headers must be ASCII. new URL() percent-encodes anything else
-// (e.g. https://example.com/café), which is what res.redirect() did for us.
 const toLocationHeader = (originalUrl) => {
   try {
     return new URL(originalUrl).href;

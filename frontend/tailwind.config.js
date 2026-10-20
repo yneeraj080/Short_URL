@@ -1,10 +1,5 @@
 /** @type {import('tailwindcss').Config} */
-// Design tokens from the "Kinetic Minimal SaaS" design system (Stitch export).
-//
-// Neutral and status colours read CSS variables (defined in src/index.css) so
-// the whole UI switches theme when <html> gets the `dark` class. The slate
-// scale is inverted in dark mode: text-slate-900 stays "primary ink",
-// border-slate-200 stays "hairline border", and so on.
+
 const v = (name) => `rgb(var(--${name}) / <alpha-value>)`;
 const scale = (color, steps) =>
   Object.fromEntries(steps.map((s) => [s, v(`${color}-${s}`)]));
