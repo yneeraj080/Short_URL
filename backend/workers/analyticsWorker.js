@@ -3,6 +3,11 @@ const os = require("os");
 const mongoose = require("mongoose");
 const UAParser = require("ua-parser-js");
 const ClickEvent = require("../models/ClickEvent");
+const ClickStat = require("../models/ClickStat");
+const { buildCounterUpdates } = require("../utils/clickStats");
+
+// Daily counters (Phase 2). ANALYTICS_COUNTERS=false turns them off.
+const COUNTERS_ENABLED = process.env.ANALYTICS_COUNTERS !== "false";
 
 const STREAM_KEY = "url-click-events";
 const GROUP_NAME = "url-click-workers";
@@ -65,10 +70,14 @@ async function processMessages(workerRedis, messages) {
       },
     }));
 
+    // Indexes (in `events`) of clicks this call newly inserted. Only those are
+    // counted: a redelivered click is already stored and was counted then.
+    let upsertedIds = {};
     try {
-      await ClickEvent.bulkWrite(operations, {
+      const result = await ClickEvent.bulkWrite(operations, {
         ordered: false,
       });
+      upsertedIds = result.upsertedIds || {};
     } catch (error) {
       const saved = await ClickEvent.find({
         streamId: {
@@ -80,6 +89,23 @@ async function processMessages(workerRedis, messages) {
 
       if (saved.length !== events.length) {
         throw error;
+      }
+      // Partly failed (e.g. another worker inserted some first): count only
+      // the ones this call inserted; the other worker counts its own.
+      upsertedIds = error.upsertedIds || {};
+    }
+
+    if (COUNTERS_ENABLED) {
+      const newEvents = Object.keys(upsertedIds).map((i) => events[i]);
+      const counterUpdates = buildCounterUpdates(newEvents);
+      if (counterUpdates.length > 0) {
+        try {
+          await ClickStat.bulkWrite(counterUpdates, { ordered: false });
+        } catch (error) {
+          // Raw clicks are saved; the reconciliation job recomputes counters
+          // from them, so log and carry on rather than retrying (no double count).
+          console.error("Failed to update click counters:", error.message);
+        }
       }
     }
   }
@@ -133,6 +159,8 @@ async function startAnalyticsWorker(redisClient) {
 
   await workerRedis.connect();
   await ClickEvent.init();
+  // Unique { urlId, day } index must exist before counters are upserted.
+  await ClickStat.init();
 
   try {
     await workerRedis.xGroupCreate(
