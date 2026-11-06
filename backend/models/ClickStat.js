@@ -1,8 +1,6 @@
 const mongoose = require("mongoose");
 
-// Daily click counters per link: one small document per link per IST day,
-// updated by the analytics worker. Dashboards read these instead of counting
-// raw click events. Breakdown keys are browser/device/OS names (see statKey).
+
 const clickStatSchema = new mongoose.Schema(
   {
     urlId: {
@@ -10,7 +8,6 @@ const clickStatSchema = new mongoose.Schema(
       ref: "Url",
       required: true,
     },
-    // Calendar day in IST (UTC+05:30), "YYYY-MM-DD".
     day: {
       type: String,
       required: true,

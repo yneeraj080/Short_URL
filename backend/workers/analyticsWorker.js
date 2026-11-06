@@ -4,7 +4,13 @@ const mongoose = require("mongoose");
 const UAParser = require("ua-parser-js");
 const ClickEvent = require("../models/ClickEvent");
 const ClickStat = require("../models/ClickStat");
-const { buildCounterUpdates } = require("../utils/clickStats");
+const Url = require("../models/Url");
+const {
+  buildCounterUpdates,
+  recomputeCounters,
+  istDay,
+  istDayRange,
+} = require("../utils/clickStats");
 
 // Daily counters (Phase 2). ANALYTICS_COUNTERS=false turns them off.
 const COUNTERS_ENABLED = process.env.ANALYTICS_COUNTERS !== "false";
@@ -17,6 +23,17 @@ const BATCH_SIZE = 100;
 const MIN_IDLE_MS = 30000;
 const TRIM_INTERVAL_MS = 5000;
 const TRIM_ROUNDS_PER_CYCLE = 20;
+// Consumer names left behind by stopped worker containers (each container has
+// its own name) are removed once idle this long with nothing pending.
+const STALE_CONSUMER_IDLE_MS = Number(process.env.STALE_CONSUMER_IDLE_MS) || 60 * 60 * 1000;
+const STALE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+// Check-and-correct job for finished days (see reconcileClosedDays).
+const DAY_MS = 24 * 60 * 60 * 1000;
+const RECONCILE_INTERVAL_MS = Number(process.env.RECONCILE_INTERVAL_MS) || 10 * 60 * 1000;
+const RECONCILE_GRACE_MS = 10 * 60 * 1000;
+const RECONCILE_LOOKBACK_DAYS = 7;
+// Allowance for clock differences between API servers and Redis.
+const CLOCK_SKEW_MS = 60 * 1000;
 
 const sleep = (ms) =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -150,6 +167,99 @@ async function trimProcessedEntries(workerRedis) {
   return removed;
 }
 
+// Remove consumer names of workers that are gone. Only names with 0 pending
+// messages are removed (pending clicks must stay so XAUTOCLAIM can recover
+// them). A live worker reads every second, so it never looks idle; if one were
+// removed anyway, Redis recreates the name on its next read.
+async function removeStaleConsumers(workerRedis) {
+  const consumers = await workerRedis.xInfoConsumers(STREAM_KEY, GROUP_NAME);
+  let removed = 0;
+  for (const c of consumers) {
+    if (c.name !== CONSUMER_NAME && c.pending === 0 && c.idle > STALE_CONSUMER_IDLE_MS) {
+      await workerRedis.xGroupDelConsumer(STREAM_KEY, GROUP_NAME, c.name);
+      removed += 1;
+    }
+  }
+  if (removed > 0) {
+    console.log(`Removed ${removed} stale consumer name(s); ${consumers.length - removed} left`);
+  }
+}
+
+const streamIdMs = (id) => Number(String(id).split("-")[0]);
+
+// True when every click with a stream ID before `beforeMs` has been fully
+// processed (saved, counted and acknowledged). Stream IDs are the time the
+// click was added, so this tells us whether a finished day can still change.
+async function processedUpTo(workerRedis, beforeMs) {
+  const [groups, pending, stream] = await Promise.all([
+    workerRedis.xInfoGroups(STREAM_KEY),
+    workerRedis.xPending(STREAM_KEY, GROUP_NAME),
+    workerRedis.xInfoStream(STREAM_KEY),
+  ]);
+  const group = groups.find((g) => g.name === GROUP_NAME);
+  if (!group) return false;
+  // Read, not yet acknowledged: the oldest must be newer than the cut-off.
+  if (pending.pending > 0 && streamIdMs(pending.firstId) < beforeMs) return false;
+  // Not yet read at all (anything after last-delivered-id): if there is some,
+  // it is at least as new as last-delivered-id.
+  const lastDelivered = group["last-delivered-id"];
+  const unread = lastDelivered !== stream["last-generated-id"];
+  if (unread && streamIdMs(lastDelivered) < beforeMs) return false;
+  return true;
+}
+
+// Check-and-correct job: recount finished IST days (yesterday and the day
+// before) from the raw click events and overwrite their counters. A day is
+// only touched once it has ended (plus a grace period) AND none of its clicks
+// are still waiting in the stream, so nothing can change it while we recount.
+// Fixes rare gaps such as a crash between saving clicks and counting them.
+async function reconcileClosedDays(workerRedis) {
+  const now = Date.now();
+  // Oldest first. Looking back several days means a worker outage of a few
+  // days still gets corrected once the backlog is processed. Each day is
+  // recounted once (done marker); raw clicks are kept far longer (>= 14 days).
+  for (let daysAgo = RECONCILE_LOOKBACK_DAYS; daysAgo >= 1; daysAgo--) {
+    const day = istDay(now - daysAgo * DAY_MS);
+    const { start, end } = istDayRange(day);
+    if (now < end.getTime() + RECONCILE_GRACE_MS) continue;
+
+    const doneKey = `clickstats:reconciled:${day}`;
+    if (await workerRedis.exists(doneKey)) continue;
+    if (!(await processedUpTo(workerRedis, end.getTime() + CLOCK_SKEW_MS))) continue;
+
+    // Only one worker recounts a day, even with several workers running.
+    const lockKey = `clickstats:reconcile-lock:${day}`;
+    if (!(await workerRedis.set(lockKey, CONSUMER_NAME, { NX: true, EX: 600 }))) continue;
+    try {
+      const [before] = await ClickStat.aggregate([
+        { $match: { day } },
+        { $group: { _id: null, total: { $sum: "$total" } } },
+      ]);
+      const { counters, clicks } = await recomputeCounters({
+        ClickEvent,
+        ClickStat,
+        Url,
+        match: { clickedAt: { $gte: start, $lt: end } },
+      });
+      await workerRedis.set(doneKey, String(clicks), {
+        EX: ((RECONCILE_LOOKBACK_DAYS + 2) * DAY_MS) / 1000,
+      });
+      const was = before ? before.total : 0;
+      console.log(
+        `Reconciled ${day} (IST): ${clicks} clicks in ${counters} counters` +
+          (was !== clicks ? ` (corrected from ${was})` : " (already correct)")
+      );
+    } finally {
+      // Release the lock only if it is still ours: if a recount ever took
+      // longer than the lock's expiry, another worker may now hold it.
+      await workerRedis.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+        { keys: [lockKey], arguments: [CONSUMER_NAME] }
+      );
+    }
+  }
+}
+
 async function startAnalyticsWorker(redisClient) {
   const workerRedis = redisClient.duplicate();
 
@@ -179,9 +289,21 @@ async function startAnalyticsWorker(redisClient) {
 
   let pendingCursor = "0-0";
   let lastTrim = 0;
+  let lastStaleCheck = 0;
+  let lastReconcile = 0;
 
   while (true) {
     try {
+      if (COUNTERS_ENABLED && Date.now() - lastReconcile >= RECONCILE_INTERVAL_MS) {
+        lastReconcile = Date.now();
+        await reconcileClosedDays(workerRedis);
+      }
+
+      if (Date.now() - lastStaleCheck >= STALE_CHECK_INTERVAL_MS) {
+        lastStaleCheck = Date.now();
+        await removeStaleConsumers(workerRedis);
+      }
+
       if (Date.now() - lastTrim >= TRIM_INTERVAL_MS) {
         lastTrim = Date.now();
         const removed = await trimProcessedEntries(workerRedis);

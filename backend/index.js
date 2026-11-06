@@ -3,6 +3,7 @@ const { createClient } = require("redis");
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
 const rateLimit = require("express-rate-limit");
+const { RedisStore } = require("rate-limit-redis");
 const cors = require("cors");
 const startAnalyticsWorker = require("./workers/analyticsWorker");
 
@@ -37,18 +38,48 @@ app.use(
 // Middleware
 app.use(express.json());
 
-const limiter = rateLimit({
-  windowMs:
-    Number(process.env.RATE_LIMIT_WINDOW_MS) ||
-    10 * 60 * 1000,
-  limit:
-    Number(process.env.RATE_LIMIT_MAX) || 100,
-  message: {
-    error: "Too many requests, please try again after 10 mins",
-  },
-});
+// API rate limit, counted in Redis so every API process/server shares one
+// count per IP (an in-memory count allowed N x the limit with N processes).
+// Created in startServer() after Redis connects: the store loads a script
+// into Redis when it is created. The server only listens after that.
+let apiLimiter = null;
+const createApiLimiter = () => {
+  const store = new RedisStore({
+    // Time out after 1 s so a hung/unreachable Redis doesn't make every API
+    // request (logins included) wait forever; passOnStoreError then lets
+    // the request through.
+    sendCommand: (...args) =>
+      Promise.race([
+        redisClient.sendCommand(args),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("rate limit store timeout")), 1000).unref()
+        ),
+      ]),
+    prefix: "rl:api:",
+  });
+  // The store loads its Lua scripts as soon as it is created; one of those
+  // promises is never awaited. If Redis is slow at that moment the rejection
+  // would be unhandled and crash the process. The store reloads the script
+  // by itself on the next request, so ignoring the error here is safe.
+  store.incrementScriptSha.catch(() => {});
+  store.getScriptSha.catch(() => {});
 
-app.use("/api", limiter);
+  return rateLimit({
+    windowMs:
+      Number(process.env.RATE_LIMIT_WINDOW_MS) ||
+      10 * 60 * 1000,
+    limit:
+      Number(process.env.RATE_LIMIT_MAX) || 100,
+    message: {
+      error: "Too many requests, please try again after 10 mins",
+    },
+    store,
+    // If Redis has a problem, let requests through rather than failing them.
+    passOnStoreError: true,
+  });
+};
+
+app.use("/api", (req, res, next) => apiLimiter(req, res, next));
 
 // URL routes
 const urlRoutes = require("./routes/url");
@@ -71,6 +102,7 @@ async function startServer() {
     
     await redisClient.connect();
     console.log("Redis connected successfully");
+    apiLimiter = createApiLimiter();
     if (process.env.RUN_ANALYTICS_WORKER !== "false") {
       startAnalyticsWorker(redisClient).catch((error) => {
         console.error("Failed to start analytics worker:", error);

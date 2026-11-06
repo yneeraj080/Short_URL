@@ -1,6 +1,13 @@
 
 const ClickEvent = require("../models/ClickEvent");
+const ClickStat = require("../models/ClickStat");
 const Url = require("../models/Url");
+const { istDay } = require("../utils/clickStats");
+
+// Analytics page shows up to this many IST days of daily counters.
+const STATS_DAYS = 90;
+const RECENT_CLICKS = 100;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const crypto = require("crypto");
 const QRCode = require("qrcode");
 const { validationResult } = require("express-validator");
@@ -267,9 +274,7 @@ const getStats = async (req, res) => {
       shortCode: code,
       userId: req.user.id,
     })
-      .select(
-        "originalUrl shortCode clicks createdAt expiresAt analytics"
-      )
+      .select("originalUrl shortCode createdAt expiresAt")
       .lean();
 
     if (!url) {
@@ -277,49 +282,49 @@ const getStats = async (req, res) => {
         error: "Short URL not found",
       });
     }
-    const [newClickCount, recentEvents] = await Promise.all([
-      ClickEvent.countDocuments({
-        urlId: url._id,
-      }),
 
-      ClickEvent.find({
-        urlId: url._id,
-      })
+    // Totals and charts come from the daily counters (a few documents per
+    // link), not from counting raw click events. Raw events are only used for
+    // the "recent clicks" table.
+    const today = istDay(Date.now());
+    const firstDay = istDay(Date.now() - (STATS_DAYS - 1) * DAY_MS);
+    const [allTime, daily, recentEvents] = await Promise.all([
+      ClickStat.aggregate([
+        { $match: { urlId: url._id } },
+        { $group: { _id: null, total: { $sum: "$total" } } },
+      ]),
+      ClickStat.find({ urlId: url._id, day: { $gte: firstDay } })
+        .sort({ day: 1 })
+        .select("-_id day total browsers devices os")
+        .lean(),
+      ClickEvent.find({ urlId: url._id })
         .sort({ clickedAt: -1 })
-        .limit(1000)
+        .limit(RECENT_CLICKS)
         .select("clickedAt browser device os")
         .lean(),
     ]);
-    const oldAnalytics = (url.analytics || []).map((event) => ({
+
+    const recent = recentEvents.map((event) => ({
       _id: event._id,
       clickedAt: event.clickedAt,
       browser: event.browser || "Unknown",
       device: event.device || "Desktop",
       os: event.os || "Unknown",
     }));
-    const newAnalytics = recentEvents.map((event) => ({
-      _id: event._id,
-      clickedAt: event.clickedAt,
-      browser: event.browser || "Unknown",
-      device: event.device || "Desktop",
-      os: event.os || "Unknown",
-    }));
-    const analytics = [...oldAnalytics, ...newAnalytics]
-      .sort(
-        (a, b) =>
-          new Date(a.clickedAt).getTime() -
-          new Date(b.clickedAt).getTime()
-      )
-      .slice(-1000);
 
     return res.json({
       originalUrl: url.originalUrl,
       shortCode: url.shortCode,
-      clicks: (url.clicks || 0) + newClickCount,
-
       createdAt: url.createdAt,
       expiresAt: url.expiresAt,
-      analytics,
+      clicks: allTime[0] ? allTime[0].total : 0,
+      timezone: "IST",
+      today,
+      daily,
+      recent,
+      lastClickAt: recent[0] ? recent[0].clickedAt : null,
+      // Deprecated: kept for browsers still running the old frontend.
+      analytics: [...recent].reverse(),
     });
   } catch (error) {
     console.error("Error fetching URL statistics:", error);
@@ -413,9 +418,12 @@ const getUserUrls = async (req, res) => {
   }
 
   try {
+    // The old embedded click list isn't needed here (it can be large), and
+    // its clicks are already included in the daily counters.
     const urls = await Url.find({
       userId: req.user.id,
     })
+      .select("-analytics")
       .sort({ createdAt: -1 })
       .lean();
 
@@ -424,7 +432,9 @@ const getUserUrls = async (req, res) => {
     }
     const urlIds = urls.map((url) => url._id);
 
-    const clickCounts = await ClickEvent.aggregate([
+    // Sum the daily counters per link: cost depends on links x days,
+    // not on how many clicks there were.
+    const clickCounts = await ClickStat.aggregate([
       {
         $match: {
           urlId: { $in: urlIds },
@@ -433,7 +443,7 @@ const getUserUrls = async (req, res) => {
       {
         $group: {
           _id: "$urlId",
-          count: { $sum: 1 },
+          count: { $sum: "$total" },
         },
       },
     ]);
@@ -446,9 +456,7 @@ const getUserUrls = async (req, res) => {
     );
     const result = urls.map((url) => ({
       ...url,
-      clicks:
-        (url.clicks || 0) +
-        (clickCountMap.get(String(url._id)) || 0),
+      clicks: clickCountMap.get(String(url._id)) || 0,
     }));
 
     return res.json(result);
@@ -483,7 +491,10 @@ const deleteUrl = async (req, res) => {
       });
     }
 
-    await ClickEvent.deleteMany({ urlId: deletedUrl._id });
+    await Promise.all([
+      ClickEvent.deleteMany({ urlId: deletedUrl._id }),
+      ClickStat.deleteMany({ urlId: deletedUrl._id }),
+    ]);
     // This process forgets it now; other API processes within HOT_CACHE_TTL_MS.
     hotCache.remove(code);
     try {
