@@ -26,43 +26,72 @@ import {
 } from "../utils/format";
 
 const RANGES = [7, 30, 90];
-const SAMPLE_LIMIT = 1000; // the API returns at most this many recent clicks
 const DAY = 86400000;
+const IST_OFFSET = 5.5 * 60 * 60 * 1000;
 
-const dayKey = (d) => {
-  const x = new Date(d);
-  return `${x.getFullYear()}-${x.getMonth()}-${x.getDate()}`;
-};
+// Day strings are "YYYY-MM-DD". All arithmetic is done in UTC so the
+// browser's own time zone can never shift a day.
+const shiftDay = (day, offset) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) + offset * DAY).toISOString().slice(0, 10);
 
-// Clicks per calendar day for the last `days` days (oldest first).
-const buildDaily = (events, days) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const buckets = [];
-  const index = new Map();
-  for (let i = days - 1; i >= 0; i--) {
-    const date = new Date(today.getTime() - i * DAY);
-    index.set(dayKey(date), buckets.length);
-    buckets.push({ date, count: 0 });
-  }
-  events.forEach((e) => {
-    const i = index.get(dayKey(e.clickedAt));
-    if (i !== undefined) buckets[i].count += 1;
-  });
-  return buckets;
-};
+// The `n` days ending at `today` (inclusive), oldest first.
+const rangeDays = (today, n) => Array.from({ length: n }, (_, i) => shiftDay(today, i - (n - 1)));
+
+// Fallback for an older backend that doesn't send `today`.
+const istToday = () => new Date(Date.now() + IST_OFFSET).toISOString().slice(0, 10);
+
+const formatDay = (day, options = { year: "numeric", month: "short", day: "numeric" }) =>
+  new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { ...options, timeZone: "UTC" });
 
 // The UA parser reports device types in lowercase ("mobile", "tablet").
 const label = (value) => (value ? value.charAt(0).toUpperCase() + value.slice(1) : "Unknown");
 
-const countBy = (events, field) => {
-  const counts = {};
-  events.forEach((e) => {
-    // Only device types need capitalising; "iOS" / "macOS" must stay as-is.
-    const key = field === "device" ? label(e[field]) : e[field] || "Unknown";
-    counts[key] = (counts[key] || 0) + 1;
+// Copy a per-day count map, optionally normalising its keys (merging duplicates).
+const normalise = (map, keyFn) => {
+  const out = {};
+  Object.entries(map || {}).forEach(([key, count]) => {
+    const k = keyFn ? keyFn(key) : key || "Unknown";
+    out[k] = (out[k] || 0) + (Number(count) || 0);
   });
-  return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  return out;
+};
+
+const addInto = (target, map) => {
+  Object.entries(map).forEach(([key, count]) => {
+    target[key] = (target[key] || 0) + count;
+  });
+};
+
+const sortCounts = (counts) => Object.entries(counts).sort((a, b) => b[1] - a[1]);
+
+// Everything the page needs for the selected range, built from the daily counters.
+const buildRange = (dailyList, today, n) => {
+  const byDay = new Map(dailyList.map((d) => [d.day, d]));
+  const totals = { browsers: {}, devices: {}, os: {} };
+  let total = 0;
+  const days = rangeDays(today, n).map((day) => {
+    const entry = byDay.get(day);
+    const row = {
+      day,
+      count: Number(entry?.total) || 0,
+      // Only device types need capitalising; "iOS" / "macOS" must stay as-is.
+      browsers: normalise(entry?.browsers),
+      devices: normalise(entry?.devices, label),
+      os: normalise(entry?.os),
+    };
+    total += row.count;
+    addInto(totals.browsers, row.browsers);
+    addInto(totals.devices, row.devices);
+    addInto(totals.os, row.os);
+    return row;
+  });
+  return {
+    days,
+    total,
+    browsers: sortCounts(totals.browsers),
+    devices: sortCounts(totals.devices),
+    os: sortCounts(totals.os),
+  };
 };
 
 // Round the axis max up to a "nice" number (1, 2, 5 × 10^n).
@@ -104,7 +133,7 @@ const ClicksChart = ({ daily }) => {
                 key={i}
                 className="group relative flex h-full flex-1 cursor-default items-end"
                 onMouseEnter={() => setHover(i)}
-                aria-label={`${formatDate(d.date)}: ${d.count} clicks`}
+                aria-label={`${formatDay(d.day)}: ${d.count} clicks`}
                 role="img"
               >
                 <div
@@ -125,7 +154,7 @@ const ClicksChart = ({ daily }) => {
               }`}
               style={{ left: `${((hover + 0.5) / daily.length) * 100}%` }}
             >
-              {formatDate(daily[hover].date)} · <span className="font-semibold">{formatNumber(daily[hover].count)}</span>{" "}
+              {formatDay(daily[hover].day)} ·<span className="font-semibold">{formatNumber(daily[hover].count)}</span>{" "}
               {daily[hover].count === 1 ? "click" : "clicks"}
             </div>
           )}
@@ -136,14 +165,14 @@ const ClicksChart = ({ daily }) => {
         {daily.map((d, i) => (
           <span key={i} className="flex flex-1 justify-center whitespace-nowrap">
             {(daily.length - 1 - i) % labelEvery === 0
-              ? d.date.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+              ? formatDay(d.day, { month: "short", day: "numeric" })
               : ""}
           </span>
         ))}
       </div>
       {daily[peak].count > 0 && (
         <p className="mt-3 text-xs text-slate-500">
-          Busiest day: <span className="font-medium text-slate-700">{formatDate(daily[peak].date)}</span> with{" "}
+          Busiest day: <span className="font-medium text-slate-700">{formatDay(daily[peak].day)}</span> with{" "}
           <span className="tabular font-medium text-slate-700">{formatNumber(daily[peak].count)}</span> clicks
         </p>
       )}
@@ -183,13 +212,32 @@ const Breakdown = ({ title, subtitle, rows, total }) => (
   </div>
 );
 
-const exportCsv = (code, events) => {
-  const rows = [["clickedAt", "browser", "device", "os"], ...events.map((e) => [new Date(e.clickedAt).toISOString(), e.browser, label(e.device), e.os])];
+// Daily summary for the selected range: one row per day (zero days included).
+const exportCsv = (code, data) => {
+  const devices = data.devices.map(([name]) => name);
+  const os = data.os.map(([name]) => name);
+  const browsers = data.browsers.map(([name]) => name);
+  const rows = [
+    [
+      "day",
+      "total",
+      ...devices.map((n) => `device:${n}`),
+      ...os.map((n) => `os:${n}`),
+      ...browsers.map((n) => `browser:${n}`),
+    ],
+    ...data.days.map((d) => [
+      d.day,
+      d.count,
+      ...devices.map((n) => d.devices[n] || 0),
+      ...os.map((n) => d.os[n] || 0),
+      ...browsers.map((n) => d.browsers[n] || 0),
+    ]),
+  ];
   const csv = rows.map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
   const a = document.createElement("a");
   a.href = url;
-  a.download = `snipqr-${code}-clicks.csv`;
+  a.download = `snipqr-${code}-daily-${data.days.length}d.csv`;
   a.click();
   URL.revokeObjectURL(url);
 };
@@ -218,13 +266,11 @@ const Analytics = () => {
       .finally(() => setLoading(false));
   }, [user, code, navigate]);
 
-  const inRange = useMemo(() => {
-    if (!stats) return [];
-    const since = Date.now() - range * DAY;
-    return stats.analytics.filter((e) => new Date(e.clickedAt).getTime() >= since);
+  const data = useMemo(() => {
+    if (!stats) return null;
+    const dailyList = Array.isArray(stats.daily) ? stats.daily : [];
+    return buildRange(dailyList, stats.today || istToday(), range);
   }, [stats, range]);
-
-  const daily = useMemo(() => buildDaily(inRange, range), [inRange, range]);
 
   if (loading) {
     return (
@@ -238,7 +284,7 @@ const Analytics = () => {
     );
   }
 
-  if (error || !stats) {
+  if (error || !stats || !data) {
     return (
       <div className="mx-auto flex max-w-md flex-col items-center px-4 py-24 text-center">
         <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
@@ -256,9 +302,11 @@ const Analytics = () => {
 
   const expired = isExpired(stats.expiresAt);
   const shortUrl = shortUrlFor(stats.shortCode);
-  const lastClick = stats.analytics.length ? stats.analytics[stats.analytics.length - 1].clickedAt : null;
-  const sampled = stats.clicks > stats.analytics.length && stats.analytics.length >= SAMPLE_LIMIT;
-  const recent = inRange.slice(-15).reverse();
+  const recentAll = Array.isArray(stats.recent) ? stats.recent : [];
+  const recent = recentAll.slice(0, 15); // already newest first
+  const lastClick = stats.lastClickAt ?? recentAll[0]?.clickedAt ?? null;
+  const timezone = stats.timezone || "IST";
+  const average = data.total / range;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
@@ -304,7 +352,7 @@ const Analytics = () => {
             <QrIcon className="h-4 w-4" />
             QR code
           </button>
-          <button onClick={() => exportCsv(stats.shortCode, inRange)} disabled={inRange.length === 0} className="btn-secondary">
+          <button onClick={() => exportCsv(stats.shortCode, data)} disabled={data.total === 0} className="btn-secondary">
             <DownloadIcon className="h-4 w-4" />
             Export CSV
           </button>
@@ -326,20 +374,19 @@ const Analytics = () => {
             </button>
           ))}
         </div>
-        {sampled && (
-          <p className="text-xs text-slate-500">
-            Charts use the latest {formatNumber(SAMPLE_LIMIT)} of {formatNumber(stats.clicks)} clicks.
-          </p>
-        )}
+        <p className="text-xs text-slate-500">
+          Days are in {timezone}
+          {timezone === "IST" ? " (UTC+05:30)" : ""}
+        </p>
       </div>
 
       {/* Stats */}
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard label="Total clicks" value={formatNumber(stats.clicks)} icon={ActivityIcon} hint="All time" />
-        <StatCard label={`Last ${range} days`} value={formatNumber(inRange.length)} icon={ChartIcon} tone="sky" hint={sampled ? "From recent sample" : "Clicks in range"} />
+        <StatCard label={`Last ${range} days`} value={formatNumber(data.total)} icon={ChartIcon} tone="sky" hint="Clicks in range" />
         <StatCard
           label="Daily average"
-          value={(inRange.length / range).toFixed(inRange.length / range < 10 ? 1 : 0)}
+          value={average < 10 ? average.toFixed(1) : formatNumber(Math.round(average))}
           icon={CalendarIcon}
           tone="emerald"
           hint={`Over ${range} days`}
@@ -347,7 +394,7 @@ const Analytics = () => {
         <StatCard label="Last click" value={lastClick ? formatDate(lastClick) : "—"} icon={ClockIcon} tone="slate" hint={lastClick ? formatDateTime(lastClick) : "No clicks yet"} />
       </div>
 
-      {stats.analytics.length === 0 ? (
+      {!stats.clicks ? (
         <div className="card mt-6 flex flex-col items-center px-6 py-16 text-center">
           <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-soft text-brand"><ActivityIcon /></span>
           <h3 className="mt-4 font-semibold">No clicks yet</h3>
@@ -360,24 +407,26 @@ const Analytics = () => {
           <section className="card mt-6 p-5 sm:p-6">
             <h2 className="font-semibold">Clicks over time</h2>
             <p className="mb-6 text-xs text-slate-500">Daily clicks for the last {range} days</p>
-            <ClicksChart daily={daily} />
+            <ClicksChart daily={data.days} />
           </section>
 
           {/* Breakdowns */}
           <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
-            <Breakdown title="Browsers" subtitle="Client browser" rows={countBy(inRange, "browser")} total={inRange.length} />
-            <Breakdown title="Devices" subtitle="Device type" rows={countBy(inRange, "device")} total={inRange.length} />
-            <Breakdown title="Operating systems" subtitle="Host OS" rows={countBy(inRange, "os")} total={inRange.length} />
+            <Breakdown title="Browsers" subtitle="Client browser" rows={data.browsers} total={data.total} />
+            <Breakdown title="Devices" subtitle="Device type" rows={data.devices} total={data.total} />
+            <Breakdown title="Operating systems" subtitle="Host OS" rows={data.os} total={data.total} />
           </div>
 
           {/* Recent clicks */}
           <section className="card mt-6 overflow-hidden">
             <div className="border-b border-slate-200 px-5 py-4 sm:px-6">
               <h2 className="font-semibold">Recent clicks</h2>
-              <p className="text-xs text-slate-500">Latest {recent.length} in the selected range</p>
+              <p className="text-xs text-slate-500">
+                Latest {recent.length} {recent.length === 1 ? "click" : "clicks"}
+              </p>
             </div>
             {recent.length === 0 ? (
-              <p className="px-6 py-10 text-center text-sm text-slate-500">No clicks in the last {range} days.</p>
+              <p className="px-6 py-10 text-center text-sm text-slate-500">No recent clicks to show.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[520px] text-sm">
