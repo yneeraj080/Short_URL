@@ -6,15 +6,68 @@ on:
       - main
 
 jobs:
-  deploy:
+  # Build the app images on GitHub's machines (not on the 1 GB server, where a
+  # build once ran it out of memory) and publish them to GitHub Container
+  # Registry, tagged with the commit SHA and "latest".
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
 
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend (also used by the worker)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ghcr.io/yneeraj080/short_url-backend:${{ github.sha }}
+            ghcr.io/yneeraj080/short_url-backend:latest
+          # Links the package to this repo, so the deploy job may pull it.
+          labels: org.opencontainers.image.source=https://github.com/yneeraj080/Short_URL
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ghcr.io/yneeraj080/short_url-frontend:${{ github.sha }}
+            ghcr.io/yneeraj080/short_url-frontend:latest
+          labels: org.opencontainers.image.source=https://github.com/yneeraj080/Short_URL
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+
+  # The server only downloads the images built above and restarts.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Deploy to EC2
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
           EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
           EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          # Short-lived token (valid only while this job runs) so the server can
+          # pull the images, even if the packages are private.
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
           mkdir -p ~/.ssh
           echo "$EC2_SSH_KEY" > ~/.ssh/deploy_key
@@ -22,25 +75,28 @@ jobs:
 
           ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
 
-          # Keepalives stop the SSH session from dropping during long builds.
+          # Values are passed in front of `bash -s`; the script itself is
+          # quoted ('REMOTE') so nothing else is expanded on this side.
           ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
-            -i ~/.ssh/deploy_key "$EC2_USERNAME@$EC2_HOST" << 'REMOTE'
+            -i ~/.ssh/deploy_key "$EC2_USERNAME@$EC2_HOST" \
+            "IMAGE_TAG='$IMAGE_TAG' GHCR_USER='$GHCR_USER' GHCR_TOKEN='$GHCR_TOKEN' bash -s" << 'REMOTE'
             set -e
             cd /home/ubuntu/Short_URL
             git pull origin main
-            # Build one image at a time: building everything at once ran the
-            # 1 GB server out of memory (OOM killed MongoDB and the API).
-            docker compose build backend
-            docker compose build worker
-            docker compose build frontend
-            docker compose up -d
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            export IMAGE_TAG
+            # Download the images for this exact commit, then restart.
+            docker compose pull backend worker frontend
+            docker compose up -d --no-build
             # One time only (skips if already done): build the daily click
             # counters from existing clicks. The worker is paused meanwhile
             # (clicks keep queueing in Redis) and always started again.
             docker compose stop worker
             docker compose exec -T backend node scripts/backfillClickStats.js --once --force || echo "Click counter backfill FAILED - see output above"
             docker compose start worker
-            # Remove old, unused images so the disk doesn't fill up over time.
-            docker image prune -f
+            docker logout ghcr.io
+            # Remove images no container uses any more (old versions).
+            docker image prune -af
             docker compose ps
+            echo "Deployed images tagged $IMAGE_TAG"
           REMOTE

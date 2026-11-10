@@ -1,6 +1,11 @@
+# App images are built by GitHub Actions and published to GitHub Container
+# Registry; the server only pulls them (IMAGE_TAG = commit, default "latest").
+# Locally, `docker compose up -d --build` still builds from source.
 services:
   backend:
+    image: ghcr.io/yneeraj080/short_url-backend:${IMAGE_TAG:-latest}
     build: ./backend
+    restart: unless-stopped
     # cluster.js runs WEB_CONCURRENCY copies of index.js (one per CPU core you
     # want to use). Default 1; set e.g. WEB_CONCURRENCY=4 in the shell to change.
     command: ["node", "cluster.js"]
@@ -25,7 +30,8 @@ services:
       redis:
         condition: service_healthy
   worker:
-    build: ./backend
+    # Same image as the backend, different command.
+    image: ghcr.io/yneeraj080/short_url-backend:${IMAGE_TAG:-latest}
     command: ["node", "worker.js"]
     env_file:
       - ./backend/.env
@@ -39,7 +45,9 @@ services:
         condition: service_healthy
 
   frontend:
+    image: ghcr.io/yneeraj080/short_url-frontend:${IMAGE_TAG:-latest}
     build: ./frontend
+    restart: unless-stopped
     ports:
       - "3000:80"
     depends_on:
@@ -47,6 +55,7 @@ services:
 
   mongo:
     image: mongo:7
+    restart: unless-stopped
     # Cap the WiredTiger cache (default ~50% of RAM): the 1 GB EC2 server ran
     # out of memory with MongoDB, the API, Redis and a Docker build together.
     command: ["mongod", "--wiredTigerCacheSizeGB", "0.25"]
