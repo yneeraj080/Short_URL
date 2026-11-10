@@ -5,3 +5,6 @@ frontend/.env
 frontend/build/
 # design exports and other archives
 *.zip
+
+# Server-only backup settings (bucket name)
+.backup.env
